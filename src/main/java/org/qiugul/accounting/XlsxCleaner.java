@@ -3,16 +3,21 @@ package org.qiugul.accounting;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.jetbrains.annotations.NotNull;
-import org.qiugul.common.Const;
 import org.qiugul.common.NumberUtils;
 import org.qiugul.common.StringUtils;
 
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.file.FileVisitResult;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.text.SimpleDateFormat;
 import java.util.*;
-import java.util.regex.Pattern;
 
 public class XlsxCleaner {
 
@@ -21,39 +26,65 @@ public class XlsxCleaner {
     private final static String OUTCOME_HEADER = "交易类型,日期,分类,子分类,支出账户,金额,成员,商家,项目,备注";
 
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws IOException {
         XlsxCleaner xlsxCleaner = new XlsxCleaner();
-         xlsxCleaner.process("C:\\tmp\\smallpdf1.xlsx", "C:\\tmp\\output1.xlsx");
-//        xlsxCleaner.process("D:\\xhren\\data\\smallpdf1.xlsx", "D:\\xhren\\data\\output1.xlsx");
+        List<String> filePathList = new ArrayList<>();
+        filePathList.add("C:\\tmp\\origin");
+        xlsxCleaner.process(filePathList, "C:\\tmp\\output1.xlsx");
+        // xlsxCleaner.process("D:\\xhren\\data\\smallpdf1.xlsx", "D:\\xhren\\data\\output1.xlsx");
     }
 
 
-    public void process(String filePath, String outputPath) {
-        List<List<String>> rows = new ArrayList<>();
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
-        // 读取Excel文件
-        try (FileInputStream fis = new FileInputStream(filePath); Workbook workbook = new XSSFWorkbook(fis)) {
-// 遍历每个Sheet
-            for (int i = 0; i < workbook.getNumberOfSheets(); i++) {
-// 单sheet, 不用处理
-                Sheet sheet = workbook.getSheetAt(i);
-                if (sheet == null) {
-                    continue;
-                }
-// 遍历每一行
-                for (int j = 0; j <= sheet.getLastRowNum(); j++) {
-                    Row row = sheet.getRow(j);
-                    if (!isValidRow(row)) {
-                        continue;
-                    }
-// 遍历每一列
-                    List<String> curRow = readRowAsStringList(row, sdf);
-                    rows.add(curRow);
-                }
+    public void f(String folderPath) throws IOException {
+        Path start = Paths.get(folderPath);
+
+        Files.walkFileTree(start, new SimpleFileVisitor<Path>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                System.out.println("文件: " + file);
+                return FileVisitResult.CONTINUE;
             }
-        } catch (IOException e) {
-            e.printStackTrace();
+
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                System.out.println("进入目录: " + dir);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                System.err.println("访问文件失败: " + file);
+                return FileVisitResult.CONTINUE;
+            }
+        });
+    }
+
+
+    /**
+     * 食品酒水：早午晚餐，烟酒茶，水果零食
+     * 行车交通：公共交通，打车租车，私家车费用
+     * 居家物业：日常用品，水电煤气，房租，物业管理，维修保养，
+     * 交流通讯：手机费，上网费，邮寄费
+     * 衣服饰品：衣服裤子，鞋帽包包，化妆饰品
+     * 休闲娱乐：运动健身，交际聚会，休闲玩乐，宠物宝贝，旅游度假
+     * 医疗保健：药品费，保健费，美容费，治疗费
+     * 学习进修：数码装备，培训进修
+     * 人情往来：送礼请客，孝敬长辈，还人钱物，慈善捐助
+     * 金融保险：银行手续，投资亏损，按揭还款，消费税收，利息支出，赔偿罚款
+     * 其他杂项：其他支出，意外损失，烂账损失
+     *
+     * @param filePathList
+     * @param outputPath
+     * @throws IOException
+     */
+    public void process(List<String> filePathList, String outputPath) throws IOException {
+
+        List<List<String>> rows = new ArrayList<>();
+        for (String filePath : filePathList) {
+            List<List<String>> res = readXlsx(filePath);
+            rows.addAll(res);
         }
+
 
         XSSFWorkbook outWorkbook = new XSSFWorkbook();
         Sheet income = createSheet(outWorkbook, "收入", INCOME_HEADER);
@@ -107,8 +138,66 @@ public class XlsxCleaner {
         }
     }
 
+    private static List<List<String>> readXlsx(String filePath) throws IOException {
+        Path start = Paths.get(filePath);
+
+        List<List<String>> res = new ArrayList<>();
+
+        Files.walkFileTree(start, new SimpleFileVisitor<Path>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                res.addAll(doReadXlsx(file.toString()));
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                System.err.println("访问文件失败: " + file);
+                return FileVisitResult.CONTINUE;
+            }
+        });
+
+        return res;
+    }
+
+    private static List<List<String>> doReadXlsx(String filePath) {
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+        List<List<String>> rows = new ArrayList<>();
+
+        // 读取Excel文件
+        try (FileInputStream fis = new FileInputStream(filePath); Workbook workbook = new XSSFWorkbook(fis)) {
+// 遍历每个Sheet
+            for (int i = 0; i < workbook.getNumberOfSheets(); i++) {
+// 单sheet, 不用处理
+                Sheet sheet = workbook.getSheetAt(i);
+                if (sheet == null) {
+                    continue;
+                }
+// 遍历每一行
+                for (int j = 0; j <= sheet.getLastRowNum(); j++) {
+                    Row row = sheet.getRow(j);
+                    if (!isValidRow(row)) {
+                        continue;
+                    }
+// 遍历每一列
+                    List<String> curRow = readRowAsStringList(row, sdf);
+                    rows.add(curRow);
+                }
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return rows;
+    }
+
     private void processTransfer(Map<String, Integer> oldCol2Idx, Row newRow, List<String> oldRow) {
-        Map<String, Integer> newCol2IdxMap = generateHeaderMap("交易类型,日期,转出账户,转入账户,金额,成员,商家,项目,备注");
+        Map<String, Integer> newCol2IdxMap =
+                generateHeaderMap("交易类型,日期,转出账户,转入账户,金额,成员,商家,项目,备注");
         boolean negative = false;
         for (Map.Entry<String, Integer> entry : oldCol2Idx.entrySet()) {
             String oldCol = entry.getKey();
@@ -153,6 +242,10 @@ public class XlsxCleaner {
 
         cell = newRow.createCell(newCol2IdxMap.get("备注"));
         cell.setCellValue(oldCol2Idx.get("CounterParty"));
+
+
+        cell = newRow.createCell(newCol2IdxMap.get("交易类型"));
+        cell.setCellValue("转账");
     }
 
     private void processIncome(Map<String, Integer> oldCol2Idx, Row newRow, List<String> oldRow) {
@@ -202,6 +295,19 @@ public class XlsxCleaner {
 
         cell = newRow.createCell(newCol2IdxMap.get("备注"));
         cell.setCellValue(oldCol2Idx.get("CounterParty"));
+
+
+        cell = newRow.createCell(newCol2IdxMap.get("交易类型"));
+        cell.setCellValue("收入");
+
+        String type = "职业收入";
+        String subType = "工资收入";
+        cell = newRow.createCell(newCol2IdxMap.get("分类"));
+        cell.setCellValue(type);
+        cell = newRow.createCell(newCol2IdxMap.get("子分类"));
+        cell.setCellValue(subType);
+
+
     }
 
     private void processOutcome(Map<String, Integer> oldCol2Idx, Row newRow, List<String> oldRow) {
@@ -240,6 +346,16 @@ public class XlsxCleaner {
 
         cell = newRow.createCell(newCol2IdxMap.get("备注"));
         cell.setCellValue(oldCol2Idx.get("CounterParty"));
+
+
+        cell = newRow.createCell(newCol2IdxMap.get("交易类型"));
+        cell.setCellValue("支出");
+        String type = "食品酒水";
+        String subType = "早午晚餐";
+        cell = newRow.createCell(newCol2IdxMap.get("分类"));
+        cell.setCellValue(type);
+        cell = newRow.createCell(newCol2IdxMap.get("子分类"));
+        cell.setCellValue(subType);
     }
 
     @NotNull
@@ -273,7 +389,8 @@ public class XlsxCleaner {
 
     private String getOtherAccount(String counterParty) {
 // ,华宝证券,东方财富,微信钱包,支付宝余额,南阳银行,兴业银行,现金
-        String value = "小荷包,交通卡,招商证券,朝朝宝,阿里云,华宝证券,携程,哈啰,优衣库,蛙三疯,霸碗,陈香贵,天空之城,盖饭湘,楚褚热干面,7-11,东方财富,支付宝余额,南阳商业银行,兴业银行," + "现金,太平洋证券,基金,理财,鹰角,盒马,木鸢网络,网银在线,微信,上海市电力,同花顺,乡村基";
+        String value = "小荷包,交通卡,招商证券,朝朝宝,阿里云,华宝证券,携程,哈啰,优衣库,蛙三疯,霸碗,陈香贵,天空之城,盖饭湘,楚褚热干面,7-11,东方财富,支付宝余额,南阳商业银行,兴业银行,"
+                + "现金,太平洋证券,鹰角,盒马,木鸢网络,网银在线,微信,上海市电力,同花顺,乡村基,美团,董俊宏";
         String[] keywords = StringUtils.split(value, ",");
 
         for (String keyword : keywords) {
@@ -290,6 +407,21 @@ public class XlsxCleaner {
                 return "招商信用卡";
             }
         }
+
+        String s = "待报解预算收入:国库,华泰证券（上海）资产管理有限公司 433874017351:基金,上海和闵房产有限公司:乐贤居,（上云10主机）:基金,基金:基金,理财:基金,太平洋健康保险:太平洋健康保险,金城速汇:金城速汇,陈荣:陈荣,跨境支付退款:跨境支付退款";
+        Map<String, String> key2Account = new TreeMap<>(Comparator.naturalOrder());
+        String[] split = StringUtils.split(s, ",");
+        for (String item : split) {
+            String[] each = StringUtils.split(item, ":");
+            key2Account.put(each[0], each[1]);
+        }
+
+        for (Map.Entry<String, String> entry : key2Account.entrySet()) {
+            if (counterParty.contains(entry.getKey())) {
+                return entry.getValue();
+            }
+        }
+
         return counterParty;
 
     }
